@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG 系統架構圖編輯器</title>
+    <style>
+        /* Base & Reset */
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f8fafc; font-family: 'Inter', sans-serif; user-select: none; display: flex; flex-direction: column; color: #1e293b; }
+        .hidden { display: none !important; }
+
+        /* Toolbar Styles */
+        .toolbar { background-color: #0f172a; border-bottom: 1px solid #1e293b; padding: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); z-index: 10; flex-shrink: 0; }
+        .toolbar-title { font-weight: 700; color: white; margin-right: 1rem; font-size: 1.125rem; }
+        .toolbar-btn { padding: 0.5rem 0.75rem; font-size: 0.875rem; font-weight: 500; border-radius: 0.375rem; transition: all 0.2s; cursor: pointer; border: 1px solid transparent; display: flex; align-items: center; gap: 0.25rem; background: none; }
+        .btn-default { background-color: #f1f5f9; color: #334155; border-color: #e2e8f0; }
+        .btn-default:hover { background-color: #e2e8f0; }
+        .btn-active { background-color: #3b82f6; color: white; border-color: #2563eb; }
+        .btn-slate-dark { background-color: #334155; color: white; border-color: #475569; }
+        .btn-slate-dark:hover { background-color: #475569; }
+        .btn-emerald { background-color: #059669; color: white; border-color: #047857; }
+        .btn-emerald:hover { background-color: #047857; }
+        .toolbar-divider { width: 1px; height: 1.5rem; background-color: #334155; margin: 0 0.5rem; }
+        .flex-grow { flex-grow: 1; }
+        
+        /* Canvas & SVG Elements */
+        #canvas-container { width: 100%; height: 100%; position: relative; cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+        svg { display: block; width: 100%; height: 100%; outline: none; }
+        
+        .element-group { cursor: pointer; }
+        
+        .region-rect { stroke-dasharray: 6 4; stroke-width: 2; transition: stroke 0.2s; }
+        .element-group:hover .region-rect { stroke-dasharray: none; filter: brightness(0.95); }
+        
+        .machine-rect { stroke-width: 2; filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)); transition: filter 0.2s; }
+        .element-group:hover .machine-rect, .machine-selected .machine-rect { filter: drop-shadow(0 4px 6px rgb(59 130 246 / 0.5)); stroke-width: 3; }
+        
+        .machine-text, .region-text, .port-text, .legend-text { pointer-events: none; user-select: none; font-family: sans-serif; font-size: 14px; font-weight: 500; }
+        .region-text { font-size: 12px; font-weight: 700; }
+        .port-text { font-size: 12px; fill: #1e293b; font-weight: 700; text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; }
+        .legend-title { font-size: 14px; font-weight: bold; fill: #0f172a; }
+        .legend-text { font-size: 12px; fill: #334155; }
+        
+        .resize-handle { fill: #ffffff; stroke: #333; stroke-width: 1.5; cursor: se-resize; }
+        
+        .port-circle { stroke: #ffffff; stroke-width: 2; cursor: crosshair; transition: transform 0.1s; }
+        .port-circle:hover { transform: scale(1.3); filter: brightness(0.9); }
+        
+        .wire-path { fill: none !important; stroke-width: 2; stroke-linejoin: round; pointer-events: stroke; cursor: pointer; transition: stroke-width 0.2s; }
+        .wire-path:hover { stroke-width: 4; }
+        .wire-hitbox { fill: none !important; stroke: transparent; stroke-width: 15; pointer-events: stroke; cursor: context-menu; }
+        
+        .waypoint { fill: #ffffff; stroke: #ef4444; stroke-width: 2; cursor: move; }
+        .waypoint:hover { transform: scale(1.2); }
+        
+        /* Context Menu */
+        #context-menu { display: none; position: absolute; z-index: 50; background: white; border-radius: 0.5rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; min-width: 180px; padding: 0.25rem 0; }
+        .cm-item { padding: 0.5rem 1rem; font-size: 0.875rem; color: #334155; cursor: pointer; transition: background 0.15s; }
+        .cm-item:hover { background-color: #f1f5f9; color: #0f172a; }
+        .cm-danger { color: #ef4444; }
+        .cm-danger:hover { background-color: #fef2f2; color: #dc2626; }
+        .cm-divider { height: 1px; background-color: #e2e8f0; margin: 0.25rem 0; }
+
+        /* Notification Toast */
+        #toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; color: white; padding: 12px 24px; border-radius: 8px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+
+        /* Modal Styles */
+        .modal-overlay { position: fixed; inset: 0; background-color: rgba(15, 23, 42, 0.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
+        .modal-box { background: white; padding: 1.5rem; border-radius: 0.5rem; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1); width: 20rem; }
+        .modal-box-lg { width: 450px; max-height: 80vh; display: flex; flex-direction: column; }
+        .form-input { width: 100%; border: 1px solid #cbd5e1; border-radius: 0.375rem; padding: 0.5rem 0.75rem; font-size: 0.875rem; outline: none; box-sizing: border-box; }
+        .form-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+        .btn-modal-primary { padding: 0.5rem 1rem; background-color: #2563eb; color: white; border-radius: 0.375rem; border: none; cursor: pointer; font-weight: 500; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .btn-modal-primary:hover { background-color: #1d4ed8; }
+        .btn-modal-secondary { padding: 0.5rem 1rem; border: 1px solid #cbd5e1; border-radius: 0.375rem; background: white; color: #475569; cursor: pointer; font-weight: 500; }
+        .btn-modal-secondary:hover { background-color: #f8fafc; }
+    </style>
+</head>
+<body>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-title">SVG 架構圖編輯器</div>
+        <button onclick="toggleWaypoints()" id="btn-toggle-wp" class="toolbar-btn btn-active">👁️ 控制點</button>
+        <button onclick="openLegendModal()" class="toolbar-btn btn-default">📋 圖例與線路類型</button>
+        <div class="toolbar-divider"></div>
+        
+        <!-- 復原與重做按鈕 -->
+        <button onclick="undo()" class="toolbar-btn btn-default" title="Ctrl+Z">↩️ 復原</button>
+        <button onclick="redo()" class="toolbar-btn btn-default" title="Ctrl+Y">↪️ 重做</button>
+        <div class="toolbar-divider"></div>
+
+        <button onclick="handleZoom(1.2)" class="toolbar-btn btn-default">🔍+</button>
+        <button onclick="handleZoom(1/1.2)" class="toolbar-btn btn-default">🔍-</button>
+        <button onclick="resetZoom()" class="toolbar-btn btn-default">重設</button>
+        <div class="toolbar-divider"></div>
+        <button onclick="clearAll()" class="toolbar-btn btn-default" style="color: #dc2626;">清除全部</button>
+        <div class="flex-grow"></div>
+        <button onclick="document.getElementById('import-file').click()" class="toolbar-btn btn-slate-dark">匯入 SVG</button>
+        <button onclick="exportSVG()" class="toolbar-btn btn-emerald">匯出 SVG</button>
+        <input type="file" id="import-file" accept=".svg" class="hidden" onchange="importSVG(event)">
+    </div>
+
+    <!-- Canvas -->
+    <div id="canvas-container">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+            <style>
+                .wire-path { fill: none !important; stroke-width: 2; stroke-linejoin: round; }
+                .wire-hitbox { fill: none !important; stroke: transparent; stroke-width: 15; }
+                .machine-text, .region-text, .port-text, .legend-text, .legend-title { font-family: sans-serif; }
+                .machine-text, .region-text { font-size: 14px; font-weight: 500; }
+                .region-text { font-size: 12px; font-weight: 700; }
+                .port-text { font-size: 12px; font-weight: 700; text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff; }
+                .legend-title { font-size: 14px; font-weight: bold; fill: #0f172a; }
+                .legend-text { font-size: 12px; fill: #334155; }
+                .machine-rect { stroke-width: 2; }
+                .region-rect { stroke-dasharray: 6 4; stroke-width: 2; }
+            </style>
+            <defs>
+                <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                    <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e7eb" stroke-width="1"/>
+                </pattern>
+                <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+                    <feDropShadow dx="2" dy="4" stdDeviation="4" flood-opacity="0.1"/>
+                </filter>
+            </defs>
+            <g id="viewport-group" transform="translate(0,0) scale(1)">
+                <!-- Infinite Background for panning and grid -->
+                <rect id="canvas-bg" x="-100000" y="-100000" width="200000" height="200000" fill="url(#grid)" pointer-events="all" data-type="canvas" />
+                
+                <!-- SVG DOM ORDERING STRICTLY ENFORCED -->
+                <g id="layer-regions"></g>
+                <g id="layer-machines"></g>
+                <g id="layer-wires"></g>
+                <g id="layer-ports"></g>
+                <g id="layer-waypoints"></g>
+                <g id="layer-legend"></g>
+                <g id="layer-ui"></g>
+            </g>
+        </svg>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div id="cm-add-machine" class="cm-item" onclick="handleMenu('add-machine')">新增機器</div>
+        <div id="cm-add-region" class="cm-item" onclick="handleMenu('add-region')">新增區域</div>
+        <div id="cm-add-port" class="cm-item" onclick="handleMenu('add-port')">新增端口</div>
+        <div id="cm-start-connection" class="cm-item" onclick="handleMenu('start-connection')">新增連線</div>
+        <div id="cm-add-cp" class="cm-item" onclick="handleMenu('add-cp')">新增控制點</div>
+        <div id="cm-delete-cp" class="cm-item" onclick="handleMenu('delete-cp')">刪除控制點</div>
+        <div id="cm-toggle-text-dir" class="cm-item" onclick="handleMenu('toggle-text-dir')">切換文字方向 (水平/垂直)</div>
+        <div id="cm-rename" class="cm-item" onclick="handleMenu('rename')">重新命名</div>
+        <div id="cm-change-color" class="cm-item" onclick="handleMenu('change-color')">更改顏色</div>
+        <div class="cm-divider" id="cm-div-danger"></div>
+        <div id="cm-delete" class="cm-item cm-danger" onclick="handleMenu('delete')">刪除</div>
+    </div>
+
+    <!-- Modals Overlay -->
+    <div id="modal-overlay" class="modal-overlay hidden">
+        
+        <!-- Rename Modal -->
+        <div id="modal-rename" class="modal-box hidden">
+            <h3 style="margin-top: 0; margin-bottom: 1rem; font-weight: bold; font-size: 1.125rem; color: #1e293b;">重新命名</h3>
+            <input type="text" id="rename-input" class="form-input" style="margin-bottom: 1.5rem;" placeholder="輸入名稱...">
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button onclick="closeModals()" class="btn-modal-secondary">取消</button>
+                <button onclick="saveRename()" class="btn-modal-primary">儲存</button>
+            </div>
+        </div>
+
+        <!-- Legend Settings Modal -->
+        <div id="modal-legend" class="modal-box modal-box-lg hidden">
+            <h3 style="margin-top: 0; font-weight: bold; font-size: 1.125rem; color: #1e293b; margin-bottom: 0.5rem;">📋 圖例與預設線路類型</h3>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: #334155; margin-bottom: 1rem; cursor: pointer;">
+                <input type="checkbox" id="legend-show-cb" style="border-radius: 0.25rem; border-color: #cbd5e1;">
+                <span>在畫布上顯示圖例方塊</span>
+            </label>
+            
+            <div style="flex-grow: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 0.375rem; padding: 0.5rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem;" id="legend-list">
+                <!-- Legend items render here -->
+            </div>
+
+            <div style="background-color: #f8fafc; padding: 0.75rem; border-radius: 0.375rem; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                <div style="font-size: 0.875rem; font-weight: 600; color: #334155;">新增預設類型</div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="color" id="new-preset-color" value="#ff0000" style="height: 2.25rem; width: 3rem; cursor: pointer; border: 1px solid #cbd5e1; border-radius: 0.375rem; padding: 0; background: none;">
+                    <input type="text" id="new-preset-name" placeholder="類型名稱 (如: 電源線)" class="form-input" style="margin-bottom: 0; flex-grow: 1;">
+                    <button onclick="addPreset()" class="btn-modal-primary" style="background-color: #1e293b; white-space: nowrap;">新增</button>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button onclick="closeModals(); render();" class="btn-modal-primary">完成</button>
+            </div>
+        </div>
+
+        <!-- Color Picker Modal -->
+        <div id="modal-color-picker" class="modal-box hidden">
+            <h3 style="margin-top: 0; margin-bottom: 1rem; font-weight: bold; font-size: 1.125rem; color: #1e293b;">選擇顏色</h3>
+            
+            <div id="preset-colors-container" class="hidden" style="margin-bottom: 1rem;">
+                <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.5rem;">預設線路類型</div>
+                <div id="preset-colors-grid" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <!-- Preset buttons render here -->
+                </div>
+                <div style="width: 100%; height: 1px; background-color: #e2e8f0; margin: 0.75rem 0;"></div>
+            </div>
+
+            <div style="font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.5rem;">自訂顏色</div>
+            <input type="color" id="custom-color-input" style="width: 100%; height: 3rem; cursor: pointer; border: 1px solid #cbd5e1; border-radius: 0.375rem; margin-bottom: 1.5rem; padding: 0; background: none;">
+            
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button onclick="closeModals()" class="btn-modal-secondary">取消</button>
+                <button onclick="saveColor()" class="btn-modal-primary">套用</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast">訊息</div>
+
+<script>
+/**
+ * Core Application State
+ */
+let state = {
+    regions: [],
+    machines: [],
+    ports: [],
+    wires: [],
+    config: { showWaypoints: true, gridSize: 20 },
+    legend: { show: false, x: 40, y: 40, presets: [] }
+};
+
+let ui = {
+    mode: 'normal',
+    selection: null, 
+    drag: null,
+    wireStartPort: null,
+    contextTarget: null,
+    contextPos: {x: 0, y: 0},
+    viewport: { x: 0, y: 0, zoom: 1 }
+};
+
+// === 復原 (Undo) 與 重做 (Redo) 系統 ===
+let historyStack = [];
+let redoStack = [];
+
+function saveHistory() {
+    if (historyStack.length > 30) historyStack.shift(); 
+    historyStack.push(JSON.stringify(state));
+    redoStack = []; 
+}
+
+function undo() {
+    if (historyStack.length === 0) return showToast('沒有可復原的動作');
+    redoStack.push(JSON.stringify(state));
+    state = JSON.parse(historyStack.pop());
+    ui.selection = null; ui.drag = null; ui.mode = 'normal'; ui.wireStartPort = null;
+    render();
+    showToast('已復原');
+}
+
+function redo() {
+    if (redoStack.length === 0) return showToast('沒有可重做的動作');
+    historyStack.push(JSON.stringify(state));
+    state = JSON.parse(redoStack.pop());
+    ui.selection = null; ui.drag = null; ui.mode = 'normal'; ui.wireStartPort = null;
+    render();
+    showToast('已重做');
+}
+
+window.addEventListener('keydown', (e) => {
+    const isCtrl = e.ctrlKey || e.metaKey;
+    if (isCtrl && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault(); undo();
+    }
+    if (isCtrl && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+        e.preventDefault(); redo();
+    }
+});
+// =====================================
+
+const svg = document.getElementById('canvas');
+const viewportGroup = document.getElementById('viewport-group');
+
+const layers = {
+    regions: document.getElementById('layer-regions'),
+    machines: document.getElementById('layer-machines'),
+    wires: document.getElementById('layer-wires'), 
+    ports: document.getElementById('layer-ports'), 
+    waypoints: document.getElementById('layer-waypoints'),
+    legend: document.getElementById('layer-legend'), 
+    ui: document.getElementById('layer-ui')
+};
+const ctxMenu = document.getElementById('context-menu');
+
+const genId = (prefix) => `${prefix}_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+const setAttrs = (el, attrs) => Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+const snap = (val) => Math.round(val / state.config.gridSize) * state.config.gridSize;
+
+const getMouseCoords = (evt) => {
+    const rect = svg.getBoundingClientRect();
+    let rawX = evt.clientX - rect.left, rawY = evt.clientY - rect.top;
+    let x = (rawX - ui.viewport.x) / ui.viewport.zoom, y = (rawY - ui.viewport.y) / ui.viewport.zoom;
+    return { x, y };
+};
+
+function updateViewportTransform() {
+    viewportGroup.setAttribute('transform', `translate(${ui.viewport.x}, ${ui.viewport.y}) scale(${ui.viewport.zoom})`);
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.style.opacity = 1;
+    setTimeout(() => t.style.opacity = 0, 3000);
+}
+
+function closeModals() {
+    document.getElementById('modal-overlay').classList.add('hidden');
+    document.getElementById('modal-rename').classList.add('hidden');
+    document.getElementById('modal-legend').classList.add('hidden');
+    document.getElementById('modal-color-picker').classList.add('hidden');
+    state.legend.show = document.getElementById('legend-show-cb').checked;
+}
+function openModal(id) {
+    closeModals();
+    document.getElementById('modal-overlay').classList.remove('hidden');
+    document.getElementById(id).classList.remove('hidden');
+}
+
+/** 支援機器與區域的端口坐標計算 */
+function getPortCoords(p) {
+    const m = state.machines.find(mac => mac.id === p.mId) || state.regions.find(r => r.id === p.mId);
+    if (!m) return {x:0, y:0};
+    
+    if (p.offset === undefined) {
+        p.offset = p.r * (p.edge === 'top' || p.edge === 'bottom' ? m.w : m.h);
+    }
+
+    let px = m.x, py = m.y;
+    if (p.edge === 'top') { 
+        px += Math.max(0, Math.min(m.w, p.offset)); 
+    }
+    else if (p.edge === 'bottom') { 
+        px += Math.max(0, Math.min(m.w, p.offset)); 
+        py += m.h; 
+    }
+    else if (p.edge === 'left') { 
+        py += Math.max(0, Math.min(m.h, p.offset)); 
+    }
+    else if (p.edge === 'right') { 
+        px += m.w; 
+        py += Math.max(0, Math.min(m.h, p.offset)); 
+    }
+    
+    return {x: snap(px), y: snap(py)};
+}
+
+function getPortProjection(p) {
+    const coords = getPortCoords(p);
+    let px = coords.x, py = coords.y;
+    const g = state.config.gridSize;
+    if (p.edge === 'top') py -= g;
+    if (p.edge === 'bottom') py += g;
+    if (p.edge === 'left') px -= g;
+    if (p.edge === 'right') px += g;
+    return {x: px, y: py};
+}
+
+/** A* 尋路與多層次路由 */
+function calculateBounds(sx, sy, ex, ey) {
+    let minX = Math.min(sx, ex), maxX = Math.max(sx, ex);
+    let minY = Math.min(sy, ey), maxY = Math.max(sy, ey);
+    state.machines.forEach(m => {
+        minX = Math.min(minX, m.x); maxX = Math.max(maxX, m.x + m.w);
+        minY = Math.min(minY, m.y); maxY = Math.max(maxY, m.y + m.h);
+    });
+    return { minX: minX - 800, maxX: maxX + 800, minY: minY - 800, maxY: maxY + 800 };
+}
+
+function isObstacle(x, y, padding, startPt, endPt) {
+    if (x === startPt.x && y === startPt.y) return false;
+    if (x === endPt.x && y === endPt.y) return false;
+    return state.machines.some(m => x > m.x - padding && x < m.x + m.w + padding && y > m.y - padding && y < m.y + m.h + padding);
+}
+
+function aStar(startPt, endPt, padding, avoidWires, usedNodesMap, bounds) {
+    const grid = state.config.gridSize;
+    let open = [{x: startPt.x, y: startPt.y, g: 0, f: 0, parent: null, dir: null}];
+    let closed = new Set();
+    const maxIter = 8000;
+    let iter = 0;
+
+    while (open.length > 0 && iter++ < maxIter) {
+        open.sort((a, b) => a.f - b.f);
+        let curr = open.shift();
+        
+        if (curr.x === endPt.x && curr.y === endPt.y) {
+            let path = [];
+            let ptr = curr;
+            while(ptr) { path.unshift({x: ptr.x, y: ptr.y}); ptr = ptr.parent; }
+            return path;
+        }
+
+        let key = `${curr.x},${curr.y}`;
+        if (closed.has(key)) continue;
+        closed.add(key);
+
+        const neighbors = [
+            {x: curr.x + grid, y: curr.y, dx: 1, dy: 0}, {x: curr.x - grid, y: curr.y, dx: -1, dy: 0},
+            {x: curr.x, y: curr.y + grid, dx: 0, dy: 1}, {x: curr.x, y: curr.y - grid, dx: 0, dy: -1}
+        ];
+
+        for (let n of neighbors) {
+            if (n.x < bounds.minX || n.x > bounds.maxX || n.y < bounds.minY || n.y > bounds.maxY) continue;
+            if (isObstacle(n.x, n.y, padding, startPt, endPt)) continue;
+            let nKey = `${n.x},${n.y}`;
+            if (closed.has(nKey)) continue;
+
+            let g = curr.g + grid;
+            if (avoidWires && usedNodesMap.has(nKey)) g += grid * 50;
+            if (curr.dir && (curr.dir.dx !== n.dx || curr.dir.dy !== n.dy)) g += grid * 1.5;
+
+            let h = Math.abs(n.x - endPt.x) + Math.abs(n.y - endPt.y);
+            open.push({x: n.x, y: n.y, g, f: g + h, parent: curr, dir: {dx: n.dx, dy: n.dy}});
+        }
+    }
+    return null;
+}
+
+function routeOrthogonalMultiTier(start, end, usedNodesMap) {
+    const sx = snap(start.x), sy = snap(start.y), ex = snap(end.x), ey = snap(end.y);
+    if (sx === ex && sy === ey) return [start];
+    const bounds = calculateBounds(sx, sy, ex, ey);
+    const sPt = {x: sx, y: sy}, ePt = {x: ex, y: ey};
+
+    let path = aStar(sPt, ePt, state.config.gridSize, true, usedNodesMap, bounds) || 
+               aStar(sPt, ePt, state.config.gridSize, false, usedNodesMap, bounds) || 
+               aStar(sPt, ePt, 0, false, usedNodesMap, bounds) || 
+               [sPt, {x: sPt.x, y: ePt.y}, ePt];
+    
+    return simplifyPath(path);
+}
+
+function simplifyPath(points) {
+    if (!points || points.length <= 2) return points;
+    let res = [points[0]];
+    for (let i = 1; i < points.length - 1; i++) {
+        let p = res[res.length-1], c = points[i], n = points[i+1];
+        if ((p.x === c.x && c.x === n.x) || (p.y === c.y && c.y === n.y)) continue; 
+        res.push(c);
+    }
+    res.push(points[points.length-1]);
+    return res;
+}
+
+/** 渲染核心引擎 */
+function render() {
+    Object.values(layers).forEach(l => l.innerHTML = '');
+    const globalUsedNodes = new Set();
+    
+    if (!state.legend) state.legend = { show: false, x: 40, y: 40, presets: [] }; 
+
+    // 1. Render Regions
+    state.regions.forEach(r => {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        setAttrs(g, { class: 'element-group', 'data-type': 'region', 'data-id': r.id });
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        setAttrs(rect, { class: 'region-rect', x: r.x, y: r.y, width: r.w, height: r.h, rx: 8, ry: 8, fill: r.color || 'rgba(241, 245, 249, 0.4)', stroke: r.strokeColor || '#94a3b8' });
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        setAttrs(text, { class: 'region-text', x: r.x + 8, y: r.y + 20, fill: '#64748b' });
+        text.textContent = r.name;
+        g.append(rect, text);
+        layers.regions.appendChild(g);
+        if (ui.selection?.id === r.id) drawResizeHandle(r, 'region');
+    });
+
+    // 2. Render Machines
+    state.machines.forEach(m => {
+        const isSel = ui.selection?.id === m.id;
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        setAttrs(g, { class: `element-group ${isSel?'machine-selected':''}`, 'data-type': 'machine', 'data-id': m.id });
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        setAttrs(rect, { class: 'machine-rect', x: m.x, y: m.y, width: m.w, height: m.h, rx: 4, ry: 4, fill: m.color || '#ffffff', stroke: m.strokeColor || '#475569' });
+        
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        const hex = m.color || '#ffffff';
+        const rC = parseInt(hex.slice(1,3)||'ff', 16), gC = parseInt(hex.slice(3,5)||'ff', 16), b = parseInt(hex.slice(5,7)||'ff', 16);
+        const luma = 0.2126 * rC + 0.7152 * gC + 0.0722 * b; 
+        
+        const textStyle = m.textVertical ? 'writing-mode: vertical-rl; text-orientation: upright;' : '';
+        setAttrs(text, { class: 'machine-text', x: m.x + m.w/2, y: m.y + m.h/2, 'text-anchor': 'middle', 'dominant-baseline': 'middle', fill: luma < 128 ? '#ffffff' : '#1e293b', style: textStyle });
+        text.textContent = m.name;
+        
+        g.append(rect, text);
+        layers.machines.appendChild(g);
+        if (isSel) drawResizeHandle(m, 'machine');
+    });
+
+    // 3. Wires Setup
+    let allPathsData = [];
+    let verticalSegments = [];
+
+    state.wires.forEach(w => {
+        const sp = state.ports.find(p => p.id === w.sId);
+        const tp = state.ports.find(p => p.id === w.tId);
+        if (!sp || !tp) return;
+
+        const start = getPortCoords(sp), startProj = getPortProjection(sp);
+        const end = getPortCoords(tp), endProj = getPortProjection(tp);
+        
+        let fullPath = [start];
+        const wps = w.waypoints || [];
+        
+        if (wps.length === 0) {
+            fullPath.push(...routeOrthogonalMultiTier(startProj, endProj, globalUsedNodes), end);
+        } else {
+            fullPath.push(...routeOrthogonalMultiTier(startProj, wps[0], globalUsedNodes));
+            for (let i = 0; i < wps.length - 1; i++) {
+                let subPath = routeOrthogonalMultiTier(wps[i], wps[i+1], globalUsedNodes);
+                if(subPath.length > 0) subPath.shift();
+                fullPath.push(...subPath);
+            }
+            let lastSub = routeOrthogonalMultiTier(wps[wps.length-1], endProj, globalUsedNodes);
+            if(lastSub.length > 0) lastSub.shift();
+            fullPath.push(...lastSub, end);
+        }
+
+        fullPath = simplifyPath(fullPath);
+        fullPath.forEach(pt => globalUsedNodes.add(`${pt.x},${pt.y}`));
+        
+        for(let i = 0; i < fullPath.length - 1; i++) {
+            let p1 = fullPath[i], p2 = fullPath[i+1];
+            if (p1.x === p2.x) verticalSegments.push({ x: p1.x, yMin: Math.min(p1.y, p2.y), yMax: Math.max(p1.y, p2.y), wireId: w.id });
+        }
+        allPathsData.push({ wire: w, path: fullPath });
+    });
+
+    // 4. Draw Wires
+    allPathsData.forEach(data => {
+        const { wire, path } = data;
+        if (path.length === 0) return;
+
+        let d = `M ${path[0].x} ${path[0].y}`;
+        for (let i = 0; i < path.length - 1; i++) {
+            let p1 = path[i], p2 = path[i+1];
+            if (p1.y === p2.y) { 
+                let dir = p2.x > p1.x ? 1 : -1;
+                let xMin = Math.min(p1.x, p2.x), xMax = Math.max(p1.x, p2.x);
+                let intersects = verticalSegments.filter(v => v.wireId !== wire.id && v.x > xMin + 6 && v.x < xMax - 6 && p1.y > v.yMin && p1.y < v.yMax)
+                                                 .sort((a, b) => (a.x - b.x) * dir); 
+                for (let int of intersects) {
+                    d += ` L ${int.x - 5 * dir} ${p1.y} A 5 5 0 0 ${dir === 1 ? 0 : 1} ${int.x + 5 * dir} ${p1.y}`;
+                }
+                d += ` L ${p2.x} ${p2.y}`;
+            } else d += ` L ${p2.x} ${p2.y}`;
+        }
+
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        setAttrs(g, { 'data-type': 'wire', 'data-id': wire.id });
+        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        setAttrs(hitbox, { class: 'wire-hitbox', d: d, fill: 'none' }); 
+        const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        setAttrs(svgPath, { class: 'wire-path', d: d, stroke: wire.color || '#64748b', fill: 'none' });
+
+        g.append(hitbox, svgPath);
+        layers.wires.appendChild(g);
+
+        if (state.config.showWaypoints && wire.waypoints) {
+            wire.waypoints.forEach((wp, idx) => {
+                const gWp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                setAttrs(gWp, { transform: `translate(${wp.x}, ${wp.y})`, 'data-type': 'waypoint', 'data-wid': wire.id, 'data-idx': idx });
+                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                setAttrs(rect, { class: 'waypoint', x: -5, y: -5, width: 10, height: 10, rx: 0 });
+                gWp.appendChild(rect); layers.waypoints.appendChild(gWp);
+            });
+        }
+    });
+
+    // 5. Draw Ports
+    state.ports.forEach(p => {
+        const c = getPortCoords(p);
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        setAttrs(g, { transform: `translate(${c.x},${c.y})`, 'data-type': 'port', 'data-id': p.id });
+        
+        let portColor = '#10b981';
+        const connectedWire = state.wires.find(w => w.sId === p.id || w.tId === p.id);
+        if (connectedWire && connectedWire.color) portColor = connectedWire.color;
+
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        setAttrs(circle, { class: 'port-circle', r: 6, fill: portColor });
+        if (ui.wireStartPort === p.id) circle.style.fill = '#f59e0b'; 
+        
+        g.appendChild(circle);
+        if (p.name) {
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            let dx = 0, dy = 0, anchor = 'middle';
+            if (p.edge === 'top') { dx = 0; dy = -12; }
+            else if (p.edge === 'bottom') { dx = 0; dy = 18; }
+            else if (p.edge === 'left') { dx = -12; dy = 4; anchor = 'end'; }
+            else if (p.edge === 'right') { dx = 12; dy = 4; anchor = 'start'; }
+            setAttrs(text, { class: 'port-text', x: dx, y: dy, 'text-anchor': anchor });
+            text.textContent = p.name; g.appendChild(text);
+        }
+        layers.ports.appendChild(g);
+    });
+
+    // 6. Draw Legend
+    if (state.legend.show && state.legend.presets.length > 0) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        setAttrs(g, { transform: `translate(${state.legend.x}, ${state.legend.y})`, 'data-type': 'legend', style: 'cursor: move;' });
+        
+        const rowHeight = 24;
+        const boxWidth = 160;
+        const boxHeight = 36 + (state.legend.presets.length * rowHeight);
+
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        setAttrs(bg, { width: boxWidth, height: boxHeight, fill: '#ffffff', stroke: '#cbd5e1', 'stroke-width': 1, rx: 4, ry: 4, filter: 'url(#shadow)' });
+        g.appendChild(bg);
+
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        setAttrs(title, { class: 'legend-title', x: 12, y: 22 });
+        title.textContent = '圖例';
+        g.appendChild(title);
+
+        state.legend.presets.forEach((preset, i) => {
+            const yOffset = 42 + (i * rowHeight);
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            setAttrs(line, { x1: 12, y1: yOffset - 4, x2: 32, y2: yOffset - 4, stroke: preset.color, 'stroke-width': 3, 'stroke-linecap': 'round' });
+            const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            setAttrs(txt, { class: 'legend-text', x: 42, y: yOffset });
+            txt.textContent = preset.name;
+            g.appendChild(line); g.appendChild(txt);
+        });
+        layers.legend.appendChild(g);
+    }
+
+    if (ui.mode === 'add-wire' && ui.wireStartPort && ui.drag && ui.drag.curr) {
+        const sp = state.ports.find(p => p.id === ui.wireStartPort);
+        if (sp) {
+            const startProj = getPortProjection(sp);
+            const pathPts = routeOrthogonalMultiTier(startProj, ui.drag.curr, new Set());
+            let d = `M ${getPortCoords(sp).x} ${getPortCoords(sp).y} L ${startProj.x} ${startProj.y}`;
+            for(let i=1; i<pathPts.length; i++) d += ` L ${pathPts[i].x} ${pathPts[i].y}`;
+            const tmpPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            setAttrs(tmpPath, { d: d, fill: 'none', stroke: '#94a3b8', 'stroke-width': '2', 'stroke-dasharray': '5,5' });
+            layers.ui.appendChild(tmpPath);
+        }
+    }
+}
+
+function drawResizeHandle(obj, type) {
+    const rh = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    setAttrs(rh, { class: 'resize-handle', x: obj.x + obj.w - 4, y: obj.y + obj.h - 4, width: 8, height: 8, 'data-type': 'resize', 'data-id': obj.id });
+    layers.ui.appendChild(rh);
+}
+
+/** Zoom & Pan Logic */
+function handleZoom(factor, center = null) {
+    const newZoom = ui.viewport.zoom * factor;
+    if (newZoom < 0.1 || newZoom > 5) return;
+    if (!center) {
+        const rect = svg.getBoundingClientRect();
+        center = { x: rect.width / 2, y: rect.height / 2 };
+    }
+    ui.viewport.x = center.x - (center.x - ui.viewport.x) * factor;
+    ui.viewport.y = center.y - (center.y - ui.viewport.y) * factor;
+    ui.viewport.zoom = newZoom;
+    updateViewportTransform();
+}
+function resetZoom() { ui.viewport = { x: 0, y: 0, zoom: 1 }; updateViewportTransform(); }
+svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const center = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    handleZoom(e.deltaY > 0 ? (1 / 1.1) : 1.1, center);
+}, { passive: false });
+
+/** Interactions & Dragging */
+function toggleWaypoints() {
+    state.config.showWaypoints = !state.config.showWaypoints;
+    document.getElementById('btn-toggle-wp').className = `toolbar-btn ${state.config.showWaypoints ? 'btn-active' : 'btn-default'}`;
+    render();
+}
+function clearAll() { saveHistory(); state.regions = []; state.machines = []; state.ports = []; state.wires = []; ui.selection = null; resetZoom(); render(); showToast('畫布已清除'); }
+
+svg.addEventListener('mousedown', (e) => {
+    if (e.button === 1) { 
+        e.preventDefault();
+        ui.drag = { mode: 'pan', startX: e.clientX, startY: e.clientY, origVx: ui.viewport.x, origVy: ui.viewport.y };
+        return;
+    }
+    if (e.button !== 0) return; 
+    hideCtxMenu();
+    
+    const target = e.target.closest('[data-type]');
+    const coords = getMouseCoords(e);
+    
+    if (!target || target.getAttribute('data-type') === 'canvas') {
+        ui.selection = null;
+        if (ui.mode === 'add-wire') { ui.wireStartPort = null; ui.mode = 'normal'; ui.drag = null; render(); return; }
+        ui.drag = { mode: 'pan', startX: e.clientX, startY: e.clientY, origVx: ui.viewport.x, origVy: ui.viewport.y };
+        render(); return;
+    }
+
+    const type = target.getAttribute('data-type');
+    const id = target.getAttribute('data-id');
+
+    if (['legend', 'resize', 'waypoint', 'port', 'machine', 'region'].includes(type)) saveHistory();
+
+    if (ui.mode === 'add-wire' && type === 'port') {
+        if (!ui.wireStartPort) {
+            ui.wireStartPort = id;
+            ui.drag = { mode: 'draw', curr: { x: snap(coords.x), y: snap(coords.y) } };
+        } else if (ui.wireStartPort !== id) {
+            let defaultColor = state.legend.presets.length > 0 ? state.legend.presets[0].color : '#64748b';
+            state.wires.push({ id: genId('w'), sId: ui.wireStartPort, tId: id, waypoints: [], color: defaultColor });
+            ui.wireStartPort = null; ui.drag = null; ui.mode = 'normal';
+        }
+        render(); return;
+    }
+
+    if (type === 'legend') { ui.drag = { mode: 'legend', startX: coords.x, startY: coords.y, origX: state.legend.x, origY: state.legend.y }; return; }
+    if (type === 'resize') {
+        const m = state.machines.find(m => m.id === id) || state.regions.find(r => r.id === id);
+        ui.drag = { mode: 'resize', obj: m, startX: coords.x, startY: coords.y, startW: m.w, startH: m.h }; return;
+    }
+    if (type === 'waypoint') {
+        const wId = target.getAttribute('data-wid'), idx = parseInt(target.getAttribute('data-idx'));
+        ui.drag = { mode: 'waypoint', wp: state.wires.find(w => w.id === wId).waypoints[idx] }; return;
+    }
+    if (type === 'port') { ui.drag = { mode: 'port', obj: state.ports.find(p => p.id === id) }; return; }
+
+    if (type === 'machine' || type === 'region') {
+        ui.selection = { type, id };
+        const obj = type === 'machine' ? state.machines.find(m => m.id === id) : state.regions.find(r => r.id === id);
+        ui.drag = { mode: 'move', obj: obj, startX: coords.x, startY: coords.y, origX: obj.x, origY: obj.y };
+        
+        if (type === 'region') {
+            const childMachines = state.machines.filter(m => m.x >= obj.x && m.y >= obj.y && (m.x+m.w) <= (obj.x+obj.w) && (m.y+m.h) <= (obj.y+obj.h)).map(m => ({ obj: m, origX: m.x, origY: m.y }));
+            const childRegions = state.regions.filter(r => r.id !== obj.id && r.x >= obj.x && r.y >= obj.y && (r.x+r.w) <= (obj.x+obj.w) && (r.y+r.h) <= (obj.y+obj.h)).map(r => ({ obj: r, origX: r.x, origY: r.y }));
+            
+            ui.drag.children = [...childMachines, ...childRegions];
+
+            const draggedRegionIds = [obj.id, ...childRegions.map(cr => cr.obj.id)];
+            state.regions = [ ...state.regions.filter(r => !draggedRegionIds.includes(r.id)), obj, ...childRegions.map(cr => cr.obj) ];
+
+            ui.drag.childWps = [];
+            state.wires.forEach(w => {
+                if(w.waypoints) w.waypoints.forEach(wp => {
+                    if (wp.x >= obj.x && wp.x <= obj.x + obj.w && wp.y >= obj.y && wp.y <= obj.y + obj.h) ui.drag.childWps.push({ obj: wp, origX: wp.x, origY: wp.y });
+                });
+            });
+        }
+        render();
+    }
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!ui.drag) return;
+    if (ui.drag.mode === 'pan') {
+        ui.viewport.x = ui.drag.origVx + (e.clientX - ui.drag.startX);
+        ui.viewport.y = ui.drag.origVy + (e.clientY - ui.drag.startY);
+        updateViewportTransform(); return;
+    }
+
+    const coords = getMouseCoords(e);
+    
+    if (ui.drag.mode === 'draw') { ui.drag.curr = { x: snap(coords.x), y: snap(coords.y) }; render(); }
+    else if (ui.drag.mode === 'legend') {
+        state.legend.x = snap(ui.drag.origX + (coords.x - ui.drag.startX));
+        state.legend.y = snap(ui.drag.origY + (coords.y - ui.drag.startY));
+        render();
+    }
+    else if (ui.drag.mode === 'move') {
+        const dx = snap(coords.x - ui.drag.startX), dy = snap(coords.y - ui.drag.startY);
+        ui.drag.obj.x = snap(ui.drag.origX + dx); ui.drag.obj.y = snap(ui.drag.origY + dy);
+        if (ui.drag.children) ui.drag.children.forEach(ch => { ch.obj.x = snap(ch.origX + dx); ch.obj.y = snap(ch.origY + dy); });
+        if (ui.drag.childWps) ui.drag.childWps.forEach(ch => { ch.obj.x = snap(ch.origX + dx); ch.obj.y = snap(ch.origY + dy); });
+        render();
+    }
+    else if (ui.drag.mode === 'resize') {
+        ui.drag.obj.w = Math.max(state.config.gridSize * 2, snap(ui.drag.startW + (coords.x - ui.drag.startX)));
+        ui.drag.obj.h = Math.max(state.config.gridSize * 2, snap(ui.drag.startH + (coords.y - ui.drag.startY)));
+        render();
+    }
+    else if (ui.drag.mode === 'waypoint') { ui.drag.wp.x = snap(coords.x); ui.drag.wp.y = snap(coords.y); render(); }
+    else if (ui.drag.mode === 'port') {
+        const p = ui.drag.obj;
+        const m = state.machines.find(mac => mac.id === p.mId) || state.regions.find(r => r.id === p.mId);
+        if (m) {
+            let cx = snap(coords.x), cy = snap(coords.y);
+            const dists = { top: Math.abs(coords.y - m.y), bottom: Math.abs(coords.y - (m.y + m.h)), left: Math.abs(coords.x - m.x), right: Math.abs(coords.x - (m.x + m.w)) };
+            let closest = 'top';
+            for (let k in dists) if (dists[k] < dists[closest]) closest = k;
+            
+            p.edge = closest;
+            if (closest === 'top' || closest === 'bottom') {
+                cx = Math.max(m.x, Math.min(m.x + m.w, cx));
+                p.offset = cx - m.x; 
+                p.r = m.w === 0 ? 0 : (cx - m.x) / m.w; 
+            } else {
+                cy = Math.max(m.y, Math.min(m.y + m.h, cy));
+                p.offset = cy - m.y; 
+                p.r = m.h === 0 ? 0 : (cy - m.y) / m.h; 
+            }
+            render();
+        }
+    }
+});
+window.addEventListener('mouseup', () => { if (ui.drag && ui.drag.mode !== 'draw') ui.drag = null; });
+
+/** Context Menu Logic */
+svg.addEventListener('contextmenu', (e) => {
+    e.preventDefault(); ui.drag = null;
+    const target = e.target.closest('[data-type]');
+    const type = target ? target.getAttribute('data-type') : 'canvas';
+    if (type === 'legend') return; 
+    
+    ui.contextPos = getMouseCoords(e);
+    ui.contextTarget = target ? { type, id: target.getAttribute('data-id'), wId: target.getAttribute('data-wid'), idx: parseInt(target.getAttribute('data-idx')) } : { type: 'canvas' };
+    
+    const items = ['cm-add-machine', 'cm-add-region', 'cm-add-port', 'cm-start-connection', 'cm-add-cp', 'cm-delete-cp', 'cm-toggle-text-dir', 'cm-rename', 'cm-change-color', 'cm-delete', 'cm-div-danger'];
+    items.forEach(id => document.getElementById(id).style.display = 'none');
+    
+    let showItems = [];
+    if (type === 'canvas') showItems = ['cm-add-machine', 'cm-add-region'];
+    else if (type === 'machine') showItems = ['cm-add-port', 'cm-toggle-text-dir', 'cm-rename', 'cm-change-color', 'cm-div-danger', 'cm-delete'];
+    else if (type === 'region') showItems = ['cm-add-port', 'cm-rename', 'cm-change-color', 'cm-div-danger', 'cm-delete'];
+    else if (type === 'port') showItems = ['cm-start-connection', 'cm-rename', 'cm-delete'];
+    else if (type === 'wire') showItems = ['cm-add-cp', 'cm-change-color', 'cm-div-danger', 'cm-delete'];
+    else if (type === 'waypoint') showItems = ['cm-delete-cp'];
+
+    showItems.forEach(id => document.getElementById(id).style.display = 'block');
+    ctxMenu.style.display = 'block';
+    let left = e.clientX, top = e.clientY;
+    if (left + 200 > window.innerWidth) left -= 200;
+    if (top + 250 > window.innerHeight) top -= 250;
+    ctxMenu.style.left = `${left}px`; ctxMenu.style.top = `${top}px`;
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#context-menu')) hideCtxMenu(); });
+function hideCtxMenu() { ctxMenu.style.display = 'none'; }
+
+function handleMenu(action) {
+    if (!ui.contextTarget) return;
+    const { type, id, wId, idx } = ui.contextTarget;
+    const pos = ui.contextPos;
+
+    if (['add-machine', 'add-region', 'add-port', 'toggle-text-dir', 'add-cp', 'delete-cp', 'delete'].includes(action)) saveHistory();
+
+    if (action === 'add-machine') state.machines.push({ id: genId('m'), name: '新機器', x: snap(pos.x), y: snap(pos.y), w: 120, h: 80, color: '#ffffff', textVertical: false });
+    else if (action === 'add-region') state.regions.push({ id: genId('r'), name: '新區域', x: snap(pos.x - 40), y: snap(pos.y - 40), w: 200, h: 200, color: 'rgba(241, 245, 249, 0.4)' });
+    else if (action === 'add-port') {
+        let obj = type === 'machine' ? state.machines.find(x=>x.id===id) : state.regions.find(x=>x.id===id);
+        state.ports.push({ id: genId('p'), mId: id, name: 'P', edge: 'right', r: 0.5, offset: obj ? obj.h / 2 : 0 });
+    }
+    else if (action === 'start-connection') {
+        ui.mode = 'add-wire'; ui.wireStartPort = id;
+        ui.drag = { mode: 'draw', curr: {x: snap(pos.x), y: snap(pos.y)} };
+        showToast('請點擊另一個端口以完成連線');
+    }
+    else if (action === 'toggle-text-dir') {
+        let m = state.machines.find(x => x.id === id); if (m) m.textVertical = !m.textVertical;
+    }
+    else if (action === 'rename') {
+        let obj = type === 'machine' ? state.machines.find(x=>x.id===id) : type === 'region' ? state.regions.find(x=>x.id===id) : state.ports.find(x=>x.id===id);
+        if (obj) { document.getElementById('rename-input').value = obj.name || ''; openModal('modal-rename'); }
+    }
+    else if (action === 'change-color') openColorPickerModal(type, id);
+    else if (action === 'add-cp') {
+        const w = state.wires.find(x => x.id === id);
+        if (w) {
+            if (!w.waypoints) w.waypoints = [];
+            w.waypoints.push({ x: snap(pos.x), y: snap(pos.y) });
+            state.config.showWaypoints = true; document.getElementById('btn-toggle-wp').className = 'toolbar-btn btn-active';
+        }
+    }
+    else if (action === 'delete-cp') { const w = state.wires.find(x => x.id === wId); if (w && w.waypoints) w.waypoints.splice(idx, 1); }
+    else if (action === 'delete') {
+        if (type === 'machine') {
+            state.machines = state.machines.filter(m => m.id !== id);
+            const pts = state.ports.filter(p => p.mId === id).map(p => p.id);
+            state.ports = state.ports.filter(p => p.mId !== id);
+            state.wires = state.wires.filter(w => !pts.includes(w.sId) && !pts.includes(w.tId));
+        }
+        else if (type === 'region') { 
+            state.regions = state.regions.filter(r => r.id !== id); 
+            const pts = state.ports.filter(p => p.mId === id).map(p => p.id);
+            state.ports = state.ports.filter(p => p.mId !== id);
+            state.wires = state.wires.filter(w => !pts.includes(w.sId) && !pts.includes(w.tId));
+        }
+        else if (type === 'port') { state.ports = state.ports.filter(p => p.id !== id); state.wires = state.wires.filter(w => w.sId !== id && w.tId !== id); }
+        else if (type === 'wire') state.wires = state.wires.filter(w => w.id !== id);
+    }
+    hideCtxMenu(); render();
+}
+
+/** Modals & Settings Management */
+function saveRename() {
+    saveHistory();
+    const newVal = document.getElementById('rename-input').value;
+    if (ui.contextTarget) {
+        const { type, id } = ui.contextTarget;
+        let obj = type === 'machine' ? state.machines.find(x=>x.id===id) : type === 'region' ? state.regions.find(x=>x.id===id) : type === 'port' ? state.ports.find(x=>x.id===id) : null;
+        if (obj) obj.name = newVal;
+    }
+    closeModals(); render();
+}
+
+function openLegendModal() { document.getElementById('legend-show-cb').checked = state.legend.show; renderLegendList(); openModal('modal-legend'); }
+
+function updatePreset(id, inputElement, type) {
+    saveHistory();
+    const preset = state.legend.presets.find(p => p.id === id);
+    if (!preset) return;
+    
+    const oldColor = preset.color;
+    if (type === 'name') preset.name = inputElement.value;
+    if (type === 'color') preset.color = inputElement.value;
+    
+    if (type === 'color' && oldColor !== preset.color) {
+        state.wires.forEach(w => { if (w.color === oldColor) w.color = preset.color; });
+        render(); 
+    }
+}
+
+function renderLegendList() {
+    const list = document.getElementById('legend-list');
+    list.innerHTML = '';
+    if (state.legend.presets.length === 0) {
+        list.innerHTML = '<div style="font-size: 0.875rem; color: #64748b; font-style: italic; padding: 0.5rem;">目前沒有預設類型</div>'; return;
+    }
+    state.legend.presets.forEach(p => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid #f1f5f9; gap: 0.5rem;';
+        row.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-grow: 1;">
+                <input type="color" value="${p.color}" onchange="updatePreset('${p.id}', this, 'color')" style="height: 2rem; width: 2.5rem; cursor: pointer; border: 1px solid #cbd5e1; border-radius: 0.25rem; padding: 0; background: none;" title="更改顏色同步所有線路">
+                <input type="text" value="${p.name}" onchange="updatePreset('${p.id}', this, 'name')" class="form-input" style="margin-bottom: 0; font-size: 0.875rem;" placeholder="類型名稱">
+            </div>
+            <button onclick="deletePreset('${p.id}')" style="color: #ef4444; background: none; border: none; cursor: pointer; font-size: 0.875rem; padding: 0.25rem 0.5rem;">刪除</button>
+        `;
+        list.appendChild(row);
+    });
+}
+
+function addPreset() {
+    const name = document.getElementById('new-preset-name').value.trim();
+    const color = document.getElementById('new-preset-color').value;
+    if (!name) return showToast('請輸入名稱');
+    saveHistory();
+    state.legend.presets.push({ id: genId('pr'), name, color });
+    document.getElementById('new-preset-name').value = ''; renderLegendList();
+}
+
+function deletePreset(id) { saveHistory(); state.legend.presets = state.legend.presets.filter(p => p.id !== id); renderLegendList(); }
+
+function openColorPickerModal(type, id) {
+    let obj = type === 'machine' ? state.machines.find(x=>x.id===id) : type === 'region' ? state.regions.find(x=>x.id===id) : state.wires.find(x=>x.id===id);
+    if (!obj) return;
+
+    const presetContainer = document.getElementById('preset-colors-container');
+    const presetGrid = document.getElementById('preset-colors-grid');
+    const customInput = document.getElementById('custom-color-input');
+
+    if (type === 'wire' && state.legend.presets.length > 0) {
+        presetContainer.classList.remove('hidden'); presetGrid.innerHTML = '';
+        state.legend.presets.forEach(p => {
+            const btn = document.createElement('button');
+            btn.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem; border-radius: 0.25rem; border: 1px solid transparent; width: 100%; text-align: left; background: none; cursor: pointer;';
+            btn.onmouseover = () => btn.style.backgroundColor = '#f1f5f9';
+            btn.onmouseout = () => btn.style.backgroundColor = 'transparent';
+            btn.innerHTML = `<div style="width: 1.5rem; height: 0.25rem; border-radius: 2px; background-color: ${p.color}"></div><div style="font-size: 0.875rem; color: #1e293b;">${p.name}</div>`;
+            btn.onclick = () => { customInput.value = p.color; saveColor(); }; presetGrid.appendChild(btn);
+        });
+    } else { presetContainer.classList.add('hidden'); }
+
+    let currentColor = obj.color && obj.color.startsWith('#') ? obj.color.substring(0,7) : '#64748b';
+    if (type === 'region' && obj.strokeColor) currentColor = obj.strokeColor;
+    customInput.value = currentColor; openModal('modal-color-picker');
+}
+
+function saveColor() {
+    saveHistory();
+    const hex = document.getElementById('custom-color-input').value;
+    if (ui.contextTarget) {
+        const { type, id } = ui.contextTarget;
+        let obj = type === 'machine' ? state.machines.find(x=>x.id===id) : type === 'region' ? state.regions.find(x=>x.id===id) : state.wires.find(x=>x.id===id);
+        if (obj) {
+            if (type === 'region') {
+                const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+                obj.color = `rgba(${r}, ${g}, ${b}, 0.2)`; obj.strokeColor = hex;
+            } else { obj.color = hex; }
+        }
+    }
+    closeModals(); render();
+}
+
+/** SVG Import/Export */
+function exportSVG() {
+    const clone = svg.cloneNode(true);
+    const uiLayer = clone.getElementById('layer-ui'); if (uiLayer) uiLayer.innerHTML = ''; 
+    const bgRect = clone.getElementById('canvas-bg'); if (bgRect) bgRect.style.display = 'none';
+
+    const script = document.createElement('script');
+    script.setAttribute('type', 'application/json'); script.setAttribute('id', 'diagram-metadata'); script.textContent = JSON.stringify(state);
+    clone.appendChild(script);
+
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `architecture_${Date.now()}.svg`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('已匯出 SVG');
+}
+
+function importSVG(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        try {
+            const doc = new DOMParser().parseFromString(evt.target.result, "image/svg+xml");
+            const script = doc.getElementById('diagram-metadata');
+            if (script) { 
+                state = JSON.parse(script.textContent); 
+                if (!state.legend) state.legend = { show: false, x: 40, y: 40, presets: [] };
+                resetZoom(); render(); showToast('匯入成功'); 
+            } else showToast('無法辨識的 SVG 格式或遺失 Metadata');
+        } catch (err) { showToast('匯入失敗'); }
+        document.getElementById('import-file').value = '';
+    };
+    reader.readAsText(file);
+}
+
+window.onload = render;
+</script>
+</body>
+</html>
